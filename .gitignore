@@ -7,3 +7,9 @@ sdcard/
 *.n64
 *.elf
 *.map
+
+# User-supplied commercial game data / local packed output
+filesystem/cannonball/
+outrun*.zip
+cannonball64-self-contained.z64
+*.dfs

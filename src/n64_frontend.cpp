@@ -22,7 +22,7 @@ static bool g_high_gear = false;
 static char g_last_message[192] = "Cannonball64 booting...";
 static bool g_shutdown_requested = false;
 
-static const char* kSystemDir = "sd://";
+static const char* gSystemDir = "sd://";
 static const char* kSaveDir   = "sd://cannonball";
 
 static void set_message(const char* s)
@@ -91,7 +91,7 @@ static bool environment_cb(unsigned cmd, void* data)
 
         case RETRO_ENVIRONMENT_GET_SYSTEM_DIRECTORY:
             if (!data) return false;
-            *static_cast<const char**>(data) = kSystemDir;
+            *static_cast<const char**>(data) = gSystemDir;
             return true;
 
         case RETRO_ENVIRONMENT_GET_SAVE_DIRECTORY:
@@ -391,6 +391,19 @@ int main()
         GAMMA_NONE,
         FILTERS_RESAMPLE
     );
+
+    /* Public build: optional locally-appended DragonFS at ROM offset 4 MiB. */
+    const int embedded_dfs_rc = dfs_init(0xB0400000u);
+    if (embedded_dfs_rc == DFS_ESUCCESS)
+    {
+        gSystemDir = "rom:/";
+        debugf("[Cannonball64] embedded game data found at 4 MiB\n");
+    }
+    else
+    {
+        gSystemDir = "sd://";
+        debugf("[Cannonball64] no embedded game data; using SD fallback\n");
+    }
 
     ensure_sd_dirs();
 
