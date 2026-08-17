@@ -14,6 +14,11 @@ endif
 # Reuse the Libretro core's authoritative source list and include flags.
 include $(CORE_DIR)/Makefile.common
 
+# N64 replacements for unsupported POSIX dirent/mmap headers.
+INCFLAGS := -Isrc/compat $(INCFLAGS)
+# The N64 has no virtual-memory mmap facility.
+FLAGS += -UHAVE_MMAP
+
 # Cannonboard serial/cabinet passthrough is a desktop feature, not needed on N64.
 SOURCES_CXX := $(filter-out \
 	$(CORE_DIR)/src/main/cannonboard/interface.cpp \
