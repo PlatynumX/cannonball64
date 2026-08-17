@@ -143,7 +143,7 @@ static bool environment_cb(unsigned cmd, void* data)
         // Deliberately report no bitmask support. This makes the core call
         // input_state_cb per button, which keeps our N64 mapping simple.
         case RETRO_ENVIRONMENT_GET_INPUT_BITMASKS:
-            return false;
+            return true;
 
         case RETRO_ENVIRONMENT_GET_CAN_DUPE:
             if (data) *static_cast<bool*>(data) = true;
@@ -312,6 +312,41 @@ static int16_t input_state_cb(unsigned port, unsigned device,
     if (device != RETRO_DEVICE_JOYPAD)
         return 0;
 
+    if (id == RETRO_DEVICE_ID_JOYPAD_MASK)
+    {
+        uint16_t mask = 0;
+
+        if (g_pad.btn.d_up)    mask |= 1u << RETRO_DEVICE_ID_JOYPAD_UP;
+        if (g_pad.btn.d_down)  mask |= 1u << RETRO_DEVICE_ID_JOYPAD_DOWN;
+        if (g_pad.btn.d_left)  mask |= 1u << RETRO_DEVICE_ID_JOYPAD_LEFT;
+        if (g_pad.btn.d_right) mask |= 1u << RETRO_DEVICE_ID_JOYPAD_RIGHT;
+
+        /* Cannonball: Libretro B = accelerator, Y = brake */
+        if (g_pad.btn.a)       mask |= 1u << RETRO_DEVICE_ID_JOYPAD_B;
+        if (g_pad.btn.b)       mask |= 1u << RETRO_DEVICE_ID_JOYPAD_Y;
+
+        /* Z toggles Cannonball's two gear buttons. */
+        if (g_high_gear)
+            mask |= 1u << RETRO_DEVICE_ID_JOYPAD_A;
+        else
+            mask |= 1u << RETRO_DEVICE_ID_JOYPAD_X;
+
+        if (g_pad.btn.start)   mask |= 1u << RETRO_DEVICE_ID_JOYPAD_START;
+
+        /* C-Down = coin */
+        if (g_pad.btn.c_down)  mask |= 1u << RETRO_DEVICE_ID_JOYPAD_SELECT;
+
+        /* Either shoulder = viewpoint */
+        if (g_pad.btn.l || g_pad.btn.r)
+            mask |= 1u << RETRO_DEVICE_ID_JOYPAD_L;
+
+        /* C-Up = Cannonball frontend menu */
+        if (g_pad.btn.c_up)
+            mask |= 1u << RETRO_DEVICE_ID_JOYPAD_R;
+
+        return (int16_t)mask;
+    }
+
     switch (id)
     {
         case RETRO_DEVICE_ID_JOYPAD_UP:     return g_pad.btn.d_up;
@@ -330,8 +365,8 @@ static int16_t input_state_cb(unsigned port, unsigned device,
 
         case RETRO_DEVICE_ID_JOYPAD_START:  return g_pad.btn.start;
         case RETRO_DEVICE_ID_JOYPAD_SELECT: return g_pad.btn.c_down;
-        case RETRO_DEVICE_ID_JOYPAD_L:      return g_pad.btn.l;
-        case RETRO_DEVICE_ID_JOYPAD_R:      return g_pad.btn.r;
+        case RETRO_DEVICE_ID_JOYPAD_L:      return g_pad.btn.l || g_pad.btn.r;
+        case RETRO_DEVICE_ID_JOYPAD_R:      return g_pad.btn.c_up;
         default:                            return 0;
     }
 }
