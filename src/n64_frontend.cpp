@@ -392,6 +392,36 @@ int main()
         FILTERS_RESAMPLE
     );
 
+    /*
+     * Local self-contained builds append DragonFS at file offset
+     * 0x00400000. In N64 cartridge KSEG1 space this is 0xB0400000.
+     */
+    gEmbeddedDfsRc = dfs_init(0xB0400000u);
+
+    if (gEmbeddedDfsRc == DFS_ESUCCESS)
+    {
+        gSystemDir = "rom:/";
+        debugf("[Cannonball64] embedded DragonFS mounted successfully\n");
+
+        FILE* probe = fopen("rom:/cannonball/epr-10380b.133", "rb");
+        if (probe)
+        {
+            debugf("[Cannonball64] embedded Rev B ROM probe OK\n");
+            fclose(probe);
+        }
+        else
+        {
+            debugf("[Cannonball64] WARNING: DFS mounted but ROM probe failed\n");
+        }
+    }
+    else
+    {
+        gSystemDir = "sd://";
+        debugf("[Cannonball64] embedded DFS mount failed: %d (%s)\n",
+               gEmbeddedDfsRc,
+               dfs_strerror(gEmbeddedDfsRc));
+    }
+
     /* Public build: optional locally-appended DragonFS at ROM offset 4 MiB. */
     const int embedded_dfs_rc = dfs_init(0xB0400000u);
     if (embedded_dfs_rc == DFS_ESUCCESS)
@@ -418,7 +448,22 @@ int main()
 
     retro_init();
 
-    if (!retro_load_game(nullptr))
+    /*
+     * When DragonFS is mounted, give Cannonball a synthetic content path.
+     * Cannonball only uses its base directory; this bypasses libretro-common's
+     * desktop-oriented directory-existence check and goes directly to the
+     * real ROM loader using rom:/cannonball/.
+     */
+    retro_game_info embedded_game {};
+    const retro_game_info* game_arg = nullptr;
+
+    if (gEmbeddedDfsRc == DFS_ESUCCESS)
+    {
+        embedded_game.path = "rom:/cannonball/cannonball64.content";
+        game_arg = &embedded_game;
+    }
+
+    if (!retro_load_game(game_arg))
     {
         debugf("[Cannonball64] retro_load_game failed: %s\n", g_last_message);
         while (true)
