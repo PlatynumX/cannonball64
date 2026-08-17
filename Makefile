@@ -46,7 +46,7 @@ all: $(ROM_NAME).z64
 $(BUILD_DIR)/$(ROM_NAME).elf: $(OBJS)
 
 $(ROM_NAME).z64: N64_ROM_TITLE="Cannonball 64 r2"
-$(ROM_NAME).z64: N64_ROM_CONTROLLER1=joypad
+$(ROM_NAME).z64: N64_ROM_CONTROLLER1=n64,pak=rumble
 $(ROM_NAME).z64: N64_ROM_REGIONFREE=true
 
 clean:
