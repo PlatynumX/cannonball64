@@ -35,7 +35,7 @@ CFLAGS   += $(INCFLAGS) $(FLAGS)
 CXXFLAGS += $(INCFLAGS) $(FLAGS)
 
 # Third-party upstream code should not fail the N64 build because of warnings.
-N64_C_AND_CXX_FLAGS += -Wno-error
+N64_C_AND_CXX_FLAGS += -Wno-error -DCANNONBALL64=1
 
 HOST_SOURCES_CXX := src/n64_frontend.cpp
 

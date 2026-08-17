@@ -13,6 +13,7 @@
 #include <cstdio>
 #include <cstring>
 #include <sys/stat.h>
+#include "video.h"
 
 namespace {
 
@@ -21,6 +22,12 @@ static bool g_z_prev = false;
 static bool g_high_gear = false;
 static char g_last_message[192] = "Cannonball64 booting...";
 static bool g_shutdown_requested = false;
+
+static uint64_t g_prof_frame_us = 0;
+static uint64_t g_prof_video_submit_us = 0;
+static uint32_t g_prof_frames = 0;
+
+static uint16_t g_text_tlut[16] __attribute__((aligned(8)));
 
 static const char* gSystemDir = "sd://";
 static const char* kSaveDir   = "sd://cannonball";
@@ -63,7 +70,7 @@ static const char* get_variable_value(const char* key)
     // Keep the native 320x224 System 16 presentation for the first N64 port.
     if (!std::strcmp(key, "cannonball_menu_enabled"))            return "ON";
     if (!std::strcmp(key, "cannonball_menu_road_scroll_speed"))  return "50";
-    if (!std::strcmp(key, "cannonball_video_fps"))               return "Smooth (60)";
+    if (!std::strcmp(key, "cannonball_video_fps"))               return "Low (30)";
     if (!std::strcmp(key, "cannonball_video_widescreen"))        return "OFF";
     if (!std::strcmp(key, "cannonball_video_hires"))             return "OFF";
 
@@ -187,72 +194,162 @@ static bool environment_cb(unsigned cmd, void* data)
     }
 }
 
-static inline uint16_t rgb565_to_rgba5551(uint16_t p)
+
+
+static inline uint16_t cb64_rgba5551(uint32_t c)
 {
-    // RGB565:    RRRRRGGG GGGBBBBB
-    // RGBA5551:  RRRRRGGG GGBBBBBA
-    return static_cast<uint16_t>(
-        (p & 0xF800u) |
-        (p & 0x07C0u) |
-        ((p & 0x001Fu) << 1) |
-        0x0001u
-    );
+    return static_cast<uint16_t>(c & 0xFFFFu);
+}
+
+static void cb64_rdp_load_text_palette(unsigned palette)
+{
+    /*
+     * System 16 text tiles are 3bpp, stored in Cannonball's 4bpp tile cache.
+     * CI4 is therefore a direct hardware fit. Index 0 is transparent.
+     */
+    g_text_tlut[0] = 0;
+
+    const unsigned base =
+        TILEMAP_COLOUR_OFFSET + ((palette & 7u) << 3);
+
+    for (unsigned i = 1; i < 8; i++)
+        g_text_tlut[i] = cb64_rgba5551(video.rgb[base + i]);
+
+    for (unsigned i = 8; i < 16; i++)
+        g_text_tlut[i] = 0;
+
+    data_cache_hit_writeback(g_text_tlut, sizeof(g_text_tlut));
+    rdpq_tex_upload_tlut(g_text_tlut, 0, 16);
+}
+
+static void cb64_rdp_draw_text_layer(void)
+{
+    hwtiles* tiles = video.tile_layer;
+    if (!tiles)
+        return;
+
+    rdpq_set_mode_standard();
+    rdpq_mode_combiner(RDPQ_COMBINER_TEX);
+    rdpq_mode_tlut(TLUT_RGBA16);
+    rdpq_mode_alphacompare(1);
+    rdpq_mode_filter(FILTER_POINT);
+
+    int current_palette = -1;
+    uint16_t tile_index = 0;
+
+    for (unsigned my = 0; my < 32; my++)
+    {
+        for (unsigned mx = 0; mx < 64; mx++, tile_index += 2)
+        {
+            uint16_t code =
+                (static_cast<uint16_t>(tiles->text_ram[tile_index]) << 8) |
+                 static_cast<uint16_t>(tiles->text_ram[tile_index + 1]);
+
+            const unsigned priority = (code >> 15) & 1u;
+            if (priority != 1u)
+                continue;
+
+            const unsigned palette = (code >> 9) & 7u;
+
+            code &= 0x1FFu;
+            code += static_cast<uint16_t>(tiles->tile_banks[0]) * 0x1000u;
+            code &= (NUM_TILES - 1);
+
+            if (code == 0)
+                continue;
+
+            int x = static_cast<int>(mx * 8) - 192;
+            int y = static_cast<int>(my * 8);
+
+            /*
+             * Native Cannonball is 320x224, centered in the 320x240 VI mode.
+             * rdpq_tex_blit handles the partially clipped edge tiles.
+             */
+            if (x <= -8 || x >= 320 || y <= -8 || y >= 224)
+                continue;
+
+            if (current_palette != static_cast<int>(palette))
+            {
+                cb64_rdp_load_text_palette(palette);
+                current_palette = static_cast<int>(palette);
+            }
+
+            uint32_t* tile_pixels = tiles->tiles + (static_cast<unsigned>(code) << 3);
+
+            /*
+             * One tile is eight uint32 rows = 32 bytes = 8x8 CI4.
+             * The converted Cannonball tile cache is already nibble-packed in
+             * the exact left-to-right order the RDP consumes.
+             */
+            data_cache_hit_writeback(tile_pixels, 32);
+
+            surface_t tile_surface =
+                surface_make_linear(tile_pixels, FMT_CI4, 8, 8);
+
+            rdpq_tex_blit(&tile_surface,
+                          static_cast<float>(x),
+                          static_cast<float>(y + 8),
+                          nullptr);
+        }
+    }
+
+    rdpq_mode_tlut(TLUT_NONE);
+    rdpq_mode_alphacompare(0);
 }
 
 static void video_cb(const void* data, unsigned width, unsigned height, size_t pitch)
 {
+    const uint64_t submit_start = get_ticks_us();
+
     if (!data || width == 0 || height == 0)
         return;
+
+    if (width != 320 || height != 224 || pitch != 640)
+    {
+        debugf("[CB64 RDP] unexpected core frame %ux%u pitch=%u\n",
+               width, height, static_cast<unsigned>(pitch));
+        return;
+    }
 
     surface_t* fb = display_get();
     if (!fb)
         return;
 
-    // The N64 target is 320x240. Native Cannonball with widescreen/hires off
-    // is 320x224, so this normally becomes an 8-line top/bottom border.
-    const unsigned out_w = fb->width;
-    const unsigned out_h = fb->height;
+    /*
+     * Cannonball's CPU renderer now emits RGBA5551 directly.
+     * Flush it once, then let RDP copy the 320x224 surface and compose the
+     * hardware-rendered text/HUD on top.
+     */
+    data_cache_hit_writeback(data, pitch * height);
 
-    uint16_t* dst_base = static_cast<uint16_t*>(fb->buffer);
-    const unsigned dst_stride = fb->stride / sizeof(uint16_t);
+    surface_t source = surface_make(
+        const_cast<void*>(data),
+        FMT_RGBA16,
+        static_cast<uint16_t>(width),
+        static_cast<uint16_t>(height),
+        static_cast<uint16_t>(pitch)
+    );
 
-    // Opaque black.
-    for (unsigned y = 0; y < out_h; y++)
-    {
-        uint16_t* row = dst_base + y * dst_stride;
-        for (unsigned x = 0; x < out_w; x++)
-            row[x] = 0x0001;
-    }
+    rdpq_attach_clear(fb, nullptr);
 
-    unsigned draw_w = std::min(width, out_w);
-    unsigned draw_h = std::min(height, out_h);
+    /* Fast RDP copy mode for the software-rendered base layers. */
+    rdpq_set_mode_copy(false);
+    rdpq_tex_blit(&source, 0.0f, 8.0f, nullptr);
 
-    // If a future core option unexpectedly produces >320 pixels, downscale
-    // safely instead of overrunning the framebuffer.
-    if (width > out_w)
-        draw_w = out_w;
-    if (height > out_h)
-        draw_h = out_h;
+    /*
+     * First genuinely hardware-rendered Cannonball layer:
+     * System 16 text/HUD tiles are uploaded as CI4 and palette-expanded by
+     * RDP's TLUT hardware.
+     */
+    cb64_rdp_draw_text_layer();
 
-    const unsigned xoff = (out_w - draw_w) / 2;
-    const unsigned yoff = (out_h - draw_h) / 2;
+    /*
+     * Do not wait for RDP. Let it finish and flip the buffer asynchronously
+     * while the R4300 starts the next game frame.
+     */
+    rdpq_detach_show();
 
-    const auto* src_bytes = static_cast<const uint8_t*>(data);
-
-    for (unsigned y = 0; y < draw_h; y++)
-    {
-        const unsigned sy = (height == draw_h) ? y : (y * height / draw_h);
-        const auto* src = reinterpret_cast<const uint16_t*>(src_bytes + sy * pitch);
-        uint16_t* dst = dst_base + (y + yoff) * dst_stride + xoff;
-
-        for (unsigned x = 0; x < draw_w; x++)
-        {
-            const unsigned sx = (width == draw_w) ? x : (x * width / draw_w);
-            dst[x] = rgb565_to_rgba5551(src[sx]);
-        }
-    }
-
-    display_show(fb);
+    g_prof_video_submit_us += get_ticks_us() - submit_start;
 }
 
 static void audio_sample_cb(int16_t left, int16_t right)
@@ -284,9 +381,31 @@ static void input_poll_cb(void)
 
 static int16_t scaled_stick_x()
 {
-    int v = static_cast<int>(g_pad.stick_x) * 384;
-    v = std::max(-32767, std::min(32767, v));
-    return static_cast<int16_t>(v);
+    int x = static_cast<int>(g_pad.stick_x);
+    const int sign = x < 0 ? -1 : 1;
+    int mag = x < 0 ? -x : x;
+
+    constexpr int deadzone = 7;
+    constexpr int full_scale = 80;
+    constexpr int usable = full_scale - deadzone;
+
+    if (mag <= deadzone)
+        return 0;
+
+    mag -= deadzone;
+    if (mag > usable)
+        mag = usable;
+
+    /*
+     * 70% linear / 30% cubic-ish response:
+     * gentler around center without making the ends feel dead.
+     */
+    const int linear = (mag * 32767) / usable;
+    const int curved =
+        (linear * linear / 32767) * linear / 32767;
+    const int shaped = (linear * 7 + curved * 3) / 10;
+
+    return static_cast<int16_t>(sign * shaped);
 }
 
 static int16_t input_state_cb(unsigned port, unsigned device,
@@ -427,6 +546,9 @@ int main()
         FILTERS_RESAMPLE
     );
 
+    rdpq_init();
+    debugf("[CB64 RDP] RDPQ initialized\n");
+
     /*
      * The public build includes an official libdragon DragonFS image with
      * same-size placeholder ROM slots. n64tool adds it to the ROMPAK TOC,
@@ -507,11 +629,45 @@ int main()
            av.timing.sample_rate);
 
     while (!g_shutdown_requested)
+    {
+        const uint64_t frame_start = get_ticks_us();
+
         retro_run();
+
+        g_prof_frame_us += get_ticks_us() - frame_start;
+        g_prof_frames++;
+
+        if (g_prof_frames >= 30)
+        {
+            const uint64_t avg_frame =
+                g_prof_frame_us / g_prof_frames;
+            const uint64_t avg_submit =
+                g_prof_video_submit_us / g_prof_frames;
+
+            const uint32_t fps10 =
+                avg_frame
+                    ? static_cast<uint32_t>(10000000ULL / avg_frame)
+                    : 0;
+
+            debugf(
+                "[CB64 RDP PERF] fps=%u.%u frame=%llu us "
+                "rdp_submit=%llu us\n",
+                fps10 / 10,
+                fps10 % 10,
+                (unsigned long long)avg_frame,
+                (unsigned long long)avg_submit
+            );
+
+            g_prof_frame_us = 0;
+            g_prof_video_submit_us = 0;
+            g_prof_frames = 0;
+        }
+    }
 
     retro_unload_game();
     retro_deinit();
     audio_close();
+    rdpq_close();
     display_close();
     joypad_close();
 

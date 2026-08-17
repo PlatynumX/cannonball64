@@ -20,3 +20,6 @@ if [[ ! -f "$DEST/Makefile.common" ]]; then
     echo "ERROR: Makefile.common missing after checkout" >&2
     exit 1
 fi
+
+echo "Applying Cannonball64 RDP core patch"
+python3 scripts/patch_core_rdp.py "$DEST"
