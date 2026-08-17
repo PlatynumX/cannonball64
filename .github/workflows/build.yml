@@ -15,9 +15,29 @@ jobs:
       - name: Checkout Cannonball64
         uses: actions/checkout@v4
 
+      - name: Install libdragon SDK
+        shell: bash
+        run: |
+          set -euxo pipefail
+          rm -rf /tmp/libdragon
+          git clone --depth 1 --branch trunk \
+            https://github.com/DragonMinded/libdragon.git \
+            /tmp/libdragon
+
+          make -C /tmp/libdragon -j2 install
+          make -C /tmp/libdragon -j2 tools-install
+
+          echo "N64_INST=$N64_INST"
+          test -f "$N64_INST/include/n64.mk"
+          test -f "$N64_INST/mips64-elf/include/libdragon.h"
+          test -x "$N64_INST/bin/n64tool"
+
+          echo "libdragon SDK installed successfully"
+
       - name: Fetch Cannonball core
         shell: bash
         run: |
+          set -euxo pipefail
           chmod +x scripts/fetch_core.sh
           ./scripts/fetch_core.sh
           git -C vendor/cannonball rev-parse HEAD | tee cannonball-upstream-commit.txt
@@ -25,28 +45,22 @@ jobs:
       - name: Build N64 ROM
         shell: bash
         run: |
+          set -euxo pipefail
           make -j2
 
-      - name: Package non-ROM resources
+      - name: Package build
+        if: success()
         shell: bash
         run: |
-          mkdir -p package/sdcard/cannonball
-          if [ -d vendor/cannonball/res ]; then
-            cp -a vendor/cannonball/res package/sdcard/cannonball/
-          fi
+          mkdir -p package
           cp cannonball64-r2.z64 package/
           cp cannonball-upstream-commit.txt package/
           cp ROM_REQUIREMENTS.txt package/
           cp scripts/check_roms.py package/
           cp README.md package/
 
-      - name: Show size
-        shell: bash
-        run: |
-          ls -lh cannonball64-r2.z64 build/cannonball64-r2.elf
-          ${N64_INST}/bin/mips64-elf-size -G build/cannonball64-r2.elf || true
-
-      - name: Upload
+      - name: Upload ROM
+        if: success()
         uses: actions/upload-artifact@v4
         with:
           name: cannonball64-r2-full-port
