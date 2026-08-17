@@ -13,3 +13,5 @@ filesystem/cannonball/
 outrun*.zip
 cannonball64-self-contained.z64
 *.dfs
+
+# Local end-user game data/output

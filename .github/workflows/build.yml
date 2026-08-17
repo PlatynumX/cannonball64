@@ -27,12 +27,9 @@ jobs:
           make -C /tmp/libdragon -j2 install
           make -C /tmp/libdragon -j2 tools-install
 
-          echo "N64_INST=$N64_INST"
           test -f "$N64_INST/include/n64.mk"
-          test -f "$N64_INST/mips64-elf/include/libdragon.h"
           test -x "$N64_INST/bin/n64tool"
-
-          echo "libdragon SDK installed successfully"
+          test -x "$N64_INST/bin/mkdfs"
 
       - name: Fetch Cannonball core
         shell: bash
@@ -40,7 +37,22 @@ jobs:
           set -euxo pipefail
           chmod +x scripts/fetch_core.sh
           ./scripts/fetch_core.sh
-          git -C vendor/cannonball rev-parse HEAD | tee cannonball-upstream-commit.txt
+          git -C vendor/cannonball rev-parse HEAD \
+            | tee cannonball-upstream-commit.txt
+
+      - name: Prepare public DragonFS placeholders
+        shell: bash
+        run: |
+          set -euxo pipefail
+          python3 scripts/make_placeholder_fs.py
+
+          mkdir -p filesystem/cannonball/res
+          if [ -d vendor/cannonball/res ]; then
+            cp -a vendor/cannonball/res/. filesystem/cannonball/res/
+          fi
+
+          find filesystem -type f -empty -delete
+          find filesystem -depth -type d -empty -delete
 
       - name: Build N64 ROM
         shell: bash
@@ -48,19 +60,25 @@ jobs:
           set -euxo pipefail
           make -j2
 
-      - name: Package build
-        if: success()
+      - name: Verify public ROM layout
         shell: bash
         run: |
+          set -euxo pipefail
+          python3 scripts/verify_public_rom.py cannonball64-r2.z64
+
+      - name: Package build
+        shell: bash
+        run: |
+          set -euxo pipefail
           mkdir -p package
           cp cannonball64-r2.z64 package/
           cp cannonball-upstream-commit.txt package/
           cp ROM_REQUIREMENTS.txt package/
           cp scripts/check_roms.py package/
+          cp scripts/pack_local_roms.sh package/
           cp README.md package/
 
       - name: Upload ROM
-        if: success()
         uses: actions/upload-artifact@v4
         with:
           name: cannonball64-r2-full-port

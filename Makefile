@@ -2,6 +2,10 @@ BUILD_DIR := build
 SOURCE_DIR := .
 ROM_NAME := cannonball64-r2
 
+# Official libdragon DragonFS generated from public placeholder data.
+N64_MKDFS_ROOT := filesystem
+ROMFS := $(BUILD_DIR)/$(ROM_NAME).dfs
+
 # The build workflow (or scripts/fetch_core.sh) populates this.
 CORE_DIR := vendor/cannonball
 STATIC_LINKING := 0
@@ -42,6 +46,9 @@ HOST_OBJS     := $(patsubst %.cpp,$(BUILD_DIR)/%.o,$(HOST_SOURCES_CXX))
 OBJS := $(HOST_OBJS) $(CORE_C_OBJS) $(CORE_CXX_OBJS)
 
 all: $(ROM_NAME).z64
+
+# n64.mk puts this DFS in the ROMPAK TOC and appends it officially.
+$(ROM_NAME).z64: $(ROMFS)
 
 $(BUILD_DIR)/$(ROM_NAME).elf: $(OBJS)
 
