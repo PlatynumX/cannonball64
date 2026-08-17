@@ -1,0 +1,53 @@
+name: Build Cannonball64 full port
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [ "main", "master" ]
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    container:
+      image: ghcr.io/dragonminded/libdragon:trunk
+
+    steps:
+      - name: Checkout Cannonball64
+        uses: actions/checkout@v4
+
+      - name: Fetch Cannonball core
+        shell: bash
+        run: |
+          chmod +x scripts/fetch_core.sh
+          ./scripts/fetch_core.sh
+          git -C vendor/cannonball rev-parse HEAD | tee cannonball-upstream-commit.txt
+
+      - name: Build N64 ROM
+        shell: bash
+        run: |
+          make -j2
+
+      - name: Package non-ROM resources
+        shell: bash
+        run: |
+          mkdir -p package/sdcard/cannonball
+          if [ -d vendor/cannonball/res ]; then
+            cp -a vendor/cannonball/res package/sdcard/cannonball/
+          fi
+          cp cannonball64-r2.z64 package/
+          cp cannonball-upstream-commit.txt package/
+          cp ROM_REQUIREMENTS.txt package/
+          cp scripts/check_roms.py package/
+          cp README.md package/
+
+      - name: Show size
+        shell: bash
+        run: |
+          ls -lh cannonball64-r2.z64 build/cannonball64-r2.elf
+          ${N64_INST}/bin/mips64-elf-size -G build/cannonball64-r2.elf || true
+
+      - name: Upload
+        uses: actions/upload-artifact@v4
+        with:
+          name: cannonball64-r2-full-port
+          path: package/

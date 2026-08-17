@@ -1,0 +1,78 @@
+CANNONBALL64 ROM REQUIREMENTS
+=============================
+
+Cannonball requires original Sega OutRun ROM data. These files are NOT
+distributed with Cannonball64.
+
+Target set:
+    Out Run (sitdown/upright, Rev B)
+    MAME parent set short name: outrun
+
+Place the UNCOMPRESSED files directly on the SD card at:
+    /cannonball/
+
+Required Rev B files:
+
+Main 68000
+    epr-10380b.133
+    epr-10382b.118
+    epr-10381b.132
+      (some Cannonball builds also accept epr-10381a.132 with the same CRC)
+    epr-10383b.117
+
+Sub 68000
+    epr-10327a.76
+    epr-10329a.58
+    epr-10328a.75
+    epr-10330a.57
+
+Tiles
+    opr-10268.99
+    opr-10232.102
+    opr-10267.100
+    opr-10231.103
+    opr-10266.101
+    opr-10230.104
+
+Sprites
+    mpr-10371.9
+    mpr-10373.10
+    mpr-10375.11
+    mpr-10377.12
+    mpr-10372.13
+    mpr-10374.14
+    mpr-10376.15
+    mpr-10378.16
+
+Road
+    opr-10186.47
+    opr-10185.11
+
+Z80 sound program
+    epr-10187.88
+
+PCM samples
+    opr-10193.66
+    opr-10192.67
+    opr-10191.68
+    opr-10190.69
+    opr-10189.70
+    opr-10188.71
+
+Run:
+    python3 scripts/check_roms.py /path/to/extracted/outrun
+
+The validator checks CRC32, not just filenames.
+
+Optional Japanese course ROMs are not required for the first N64 build:
+    epr-10380.133
+    epr-10382.118
+    epr-10381.132
+    epr-10383.117
+    epr-10327.76
+    epr-10329.58
+    epr-10328.75
+    epr-10330.57
+
+The optional fixed PCM replacement is also NOT required by the N64 frontend;
+the N64 frontend forces Cannonball's "fixed samples" option off initially.

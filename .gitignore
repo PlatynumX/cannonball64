@@ -1,0 +1,9 @@
+build/
+vendor/
+package/
+sdcard/
+*.z64
+*.v64
+*.n64
+*.elf
+*.map
